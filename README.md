@@ -4,7 +4,7 @@
 
 SQL実行計画、DBコネクションプール、トランザクション／ロック、Redisキャッシュ、ログ・トレース、負荷試験を、同じ小さなAPIで段階的に学ぶ。
 
-> 現在は**実装開始前の設計スキャフォールド**。最初から全機能を実装せず、Phase 0から順に進める。
+> **Phase 0 実装済み。** 以降のPhaseはロードマップに沿って進める。
 
 ## 目指す状態
 
@@ -76,23 +76,75 @@ backend-performance-lab/
         └── 03-redis-cache.md
 ```
 
-`src/`、`sql/`、`scripts/`、`load-tests/` はAIとの実装時に作成する。フォルダがまだなくても問題ない。
+## 前提
 
-## 進め方：最初の1歩
+- Node.js 24（`.nvmrc` あり。`nvm use` 推奨）
+- Docker Desktop（PostgreSQL用）
+- k6（負荷試験。未導入なら `brew install k6`）
 
-1. GitHubで `backend-performance-lab` を作り、ここにあるドキュメントをpushする。
-2. AIに [`AGENTS.md`](AGENTS.md) と [`docs/roadmap.md`](docs/roadmap.md) を読ませる。
-3. **Phase 0だけ**実装してもらう。Redis／Grafana／OpenTelemetryにはまだ触れない。
-4. `GET /health` → DB接続 → `GET /orders?userId=123` → k6 の順に動作確認。
-5. 計測条件を固定して記録し、Phase 1で遅いSQLに挑戦する。
+## 起動／初期化／シード／計測
+
+```bash
+# 0. 依存関係
+cp .env.example .env
+npm install
+
+# 1. PostgreSQL（Docker）
+npm run db:up
+# 初回は healthcheck が green になるまで数秒待つ
+docker compose ps
+
+# 2. スキーマ適用 + 少量シード
+npm run db:init
+
+# 3. API 起動（別ターミナル）
+npm run start
+# 開発時の自動再起動: npm run dev
+
+# 4. 動作確認
+curl -s http://127.0.0.1:3000/health
+curl -s "http://127.0.0.1:3000/orders?userId=123"
+
+# 5. k6（API起動中に）
+npm run load:orders
+
+# 6. 実行計画の確認例（コンテナ内 psql）
+docker compose exec db psql -U lab -d performance_lab -c \
+  "EXPLAIN (ANALYZE, BUFFERS)
+   SELECT id, user_id, total, created_at
+   FROM orders
+   WHERE user_id = 123
+   ORDER BY created_at DESC
+   LIMIT 20;"
+```
+
+### よく使うコマンド
+
+| 目的 | コマンド |
+| --- | --- |
+| DB起動 | `npm run db:up` |
+| DB停止 | `npm run db:down` |
+| データごと作り直し | `npm run db:reset` → 起動後に `npm run db:init` |
+| スキーマのみ再適用 | `npm run db:schema` |
+| シードのみ再実行 | `npm run db:seed` |
+| API起動 | `npm run start` |
+| k6 | `npm run load:orders` |
+
+環境変数は `.env`（`.env.example` をコピー）。`DATABASE_URL` と `DB_POOL_MAX` で接続先とプール上限を変更できる。
+
+## 進め方：次の一歩
+
+1. 上記コマンドで `GET /health` → `GET /orders` → k6 を通す。
+2. 計測条件を固定して記録し、Phase 1（SQLと実行計画）へ進む。
+3. Redis／Grafana／OpenTelemetry はまだ入れない。
 
 ## Phase 0 の完成条件
 
-- `GET /health` が200で返る（できればDB接続確認は別途明示）。
-- `orders` のデータをAPIから取得できる。
-- `EXPLAIN (ANALYZE, BUFFERS)` を実行できる。
-- k6でローカルAPIに負荷をかけ、p95と失敗率を確認できる。
-- 実行コマンドがREADMEに追記され、別の環境で再現できる。
+- [x] `GET /health` が200で返る。
+- [x] `orders` のデータをAPIから取得できる。
+- [x] `EXPLAIN (ANALYZE, BUFFERS)` を実行できる。
+- [x] k6でローカルAPIに負荷をかけ、p95と失敗率を確認できる。
+- [x] 実行コマンドがREADMEにあり、別の環境で再現できる。
 
 ## 学習のルール
 
